@@ -6,6 +6,14 @@ import { getDrupalBaseUrl, getMenuBaseUrl } from './server'
 import type { UseFetchOptions } from '#app'
 import { callWithNuxt } from '#app'
 import { useRuntimeConfig, useState, useFetch, navigateTo, createError, h, resolveComponent, setResponseStatus, useNuxtApp, useRequestHeaders, ref, watch, useRequestEvent, computed, useHead, defineComponent } from '#imports'
+import type { 
+  DrupalPageResponse, 
+  MenuResponse, 
+  FetchPageOptions, 
+  FetchMenuOptions,
+  DrupalMessages,
+  CustomElement
+} from '../../types/api'
 
 export const useDrupalCe = () => {
   const config = useRuntimeConfig().public.drupalCe
@@ -16,9 +24,9 @@ export const useDrupalCe = () => {
    * @param fetchOptions Optional Nuxt useFetch options
    * @param skipDrupalCeApiProxy Force skip the Drupal CE API proxy. Defaults to false.
    *                            The proxy might still be skipped if serverApiProxy is set to false globally.
-   * @returns UseFetchOptions<any>
+   * @returns UseFetchOptions<DrupalPageResponse>
    */
-  const processFetchOptions = (fetchOptions: UseFetchOptions<any> = {}, skipDrupalCeApiProxy: boolean = false) => {
+  const processFetchOptions = (fetchOptions: UseFetchOptions<DrupalPageResponse> = {}, skipDrupalCeApiProxy: boolean = false): UseFetchOptions<DrupalPageResponse> => {
     if (config.serverApiProxy && !skipDrupalCeApiProxy) {
       fetchOptions.baseURL = '/api/drupal-ce'
     }
@@ -50,10 +58,10 @@ export const useDrupalCe = () => {
 
   /**
    * Custom $fetch instance
-   * @param fetchOptions UseFetchOptions<any>
+   * @param fetchOptions UseFetchOptions<DrupalPageResponse>
    * @param skipDrupalCeApiProxy Force skip the Drupal CE API proxy. Defaults to false.
    */
-  const $ceApi = (fetchOptions: UseFetchOptions<any> = {}, skipDrupalCeApiProxy: boolean = false): $Fetch<unknown, NitroFetchRequest> => {
+  const $ceApi = (fetchOptions: UseFetchOptions<DrupalPageResponse> = {}, skipDrupalCeApiProxy: boolean = false): $Fetch<unknown, NitroFetchRequest> => {
     const useFetchOptions = processFetchOptions(fetchOptions, skipDrupalCeApiProxy)
 
     return $fetch.create({
@@ -64,11 +72,11 @@ export const useDrupalCe = () => {
   /**
    * Fetch data from Drupal ce-API endpoint using $ceApi
    * @param path Path of the Drupal ce-API endpoint to fetch
-   * @param fetchOptions UseFetchOptions<any>
+   * @param fetchOptions UseFetchOptions<DrupalPageResponse>
    * @param doPassThroughHeaders Whether to pass through headers from Drupal to the client
    * @param skipDrupalCeApiProxy Force skip the Drupal CE API proxy. Defaults to false.
    */
-  const useCeApi = (path: string | Ref<string>, fetchOptions: UseFetchOptions<any> = {}, doPassThroughHeaders?: boolean, skipDrupalCeApiProxy: boolean = false): Promise<any> => {
+  const useCeApi = (path: string | Ref<string>, fetchOptions: UseFetchOptions<DrupalPageResponse> = {}, doPassThroughHeaders?: boolean, skipDrupalCeApiProxy: boolean = false): Promise<{ data: Ref<DrupalPageResponse | null>, error: Ref<any> }> => {
     const nuxtApp = useNuxtApp()
     fetchOptions.onResponse = (context) => {
       if (doPassThroughHeaders && import.meta.server && privateConfig?.passThroughHeaders) {
@@ -86,7 +94,7 @@ export const useDrupalCe = () => {
   /**
    * Returns the API endpoint with localization (if available)
    */
-  const getCeApiEndpoint = (localize: boolean = true) => {
+  const getCeApiEndpoint = (localize: boolean = true): string => {
     const nuxtApp = useNuxtApp()
     if (localize && nuxtApp.$i18n?.locale?.value && nuxtApp.$i18n.locale.value !== nuxtApp.$i18n.defaultLocale) {
       return `${config.ceApiEndpoint}/${nuxtApp.$i18n.locale.value}`
@@ -102,12 +110,17 @@ export const useDrupalCe = () => {
    * @param skipDrupalCeApiProxy Force skip the Drupal CE API proxy. Defaults to false.
    *                             The proxy might still be skipped if serverApiProxy is set to false globally.
    */
-  const fetchPage = async (path: string, useFetchOptions: UseFetchOptions<any> = {}, overrideErrorHandler?: (error?: any) => void, skipDrupalCeApiProxy: boolean = false) => {
+  const fetchPage = async (
+    path: string, 
+    useFetchOptions: FetchPageOptions = {}, 
+    overrideErrorHandler?: (error?: { value: any }) => void, 
+    skipDrupalCeApiProxy: boolean = false
+  ): Promise<Ref<DrupalPageResponse | null>> => {
     const nuxtApp = useNuxtApp()
 
     // Workaround for issue - useState is not available after async call (Nuxt instance unavailable)
     // Initialize state with default values
-    const pageState = useState('drupal-ce-page-data', () => ({
+    const pageState = useState<DrupalPageResponse>('drupal-ce-page-data', () => ({
       breadcrumbs: [],
       content: {},
       content_format: 'json',
@@ -115,8 +128,7 @@ export const useDrupalCe = () => {
         primary: [],
         secondary: [],
       },
-      settings: {},
-      messages: [],
+      messages: {},
       metatags: {
         meta: [],
         link: [],
@@ -125,10 +137,10 @@ export const useDrupalCe = () => {
       page_layout: 'default',
       title: '',
     }))
-    const serverResponse = useState('server-response', () => null)
+    const serverResponse = useState<{ _data?: DrupalPageResponse, headers?: Record<string, string>, error?: any } | null>('server-response', () => null)
     useFetchOptions.key = `page-${path}`
-    let page = null
-    const pageError = ref(null)
+    let page: Ref<DrupalPageResponse | null> = ref(null)
+    const pageError = ref<any>(null)
 
     if (import.meta.server) {
       serverResponse.value = useRequestEvent(nuxtApp).context.drupalCeCustomPageResponse
@@ -137,8 +149,8 @@ export const useDrupalCe = () => {
     // Check if the page data is already provided, e.g. by a form response.
     if (serverResponse.value) {
       if (serverResponse.value._data) {
-        page = ref(serverResponse.value._data)
-        passThroughHeaders(nuxtApp, serverResponse.value.headers)
+        page.value = serverResponse.value._data
+        passThroughHeaders(nuxtApp, serverResponse.value.headers || {})
       }
       else if (serverResponse.value.error) {
         pageError.value = serverResponse.value.error
@@ -171,7 +183,7 @@ export const useDrupalCe = () => {
       page.value = pageError.value?.data
     }
 
-    pageState.value = page
+    pageState.value = page.value || pageState.value
     return page
   }
 
@@ -183,11 +195,16 @@ export const useDrupalCe = () => {
    * @param skipDrupalCeApiProxy Force skip the Drupal CE API proxy. Defaults to false.
    *                             The proxy might still be skipped if serverApiProxy is set to false globally.
    */
-  const fetchMenu = async (name: string, useFetchOptions: UseFetchOptions<any> = {}, overrideErrorHandler?: (error?: any) => void, skipDrupalCeApiProxy: boolean = false) => {
+  const fetchMenu = async (
+    name: string, 
+    useFetchOptions: FetchMenuOptions = {}, 
+    overrideErrorHandler?: (error?: { value: any }) => void, 
+    skipDrupalCeApiProxy: boolean = false
+  ): Promise<Ref<MenuResponse[] | null>> => {
     const nuxtApp = useNuxtApp()
     useFetchOptions = processFetchOptions(useFetchOptions)
     useFetchOptions.key = useFetchOptions.key || `menu-${name}`
-    useFetchOptions.getCachedData = (key) => {
+    useFetchOptions.getCachedData = (key: string) => {
       if (nuxtApp.payload.data[key]) {
         return nuxtApp.payload.data[key]
       }
@@ -197,7 +214,7 @@ export const useDrupalCe = () => {
     const menuPath = ref(baseMenuPath)
 
     // Ensure menuPath has no leading slash
-    const sanitizeMenuPath = (path: string) => path.startsWith('/') ? path.substring(1) : path
+    const sanitizeMenuPath = (path: string): string => path.startsWith('/') ? path.substring(1) : path
 
     if (config.useLocalizedMenuEndpoint && nuxtApp.$i18n) {
       // API path with localization
@@ -218,7 +235,7 @@ export const useDrupalCe = () => {
       useFetchOptions.baseURL = getDrupalBaseUrl() + getCeApiEndpoint(false)
     }
 
-    const { data: menu, error } = await useFetch(menuPath, useFetchOptions)
+    const { data: menu, error } = await useFetch<MenuResponse[]>(menuPath, useFetchOptions)
 
     if (error.value) {
       overrideErrorHandler ? overrideErrorHandler(error) : menuErrorHandler(error)
@@ -229,20 +246,36 @@ export const useDrupalCe = () => {
   /**
    * Use messages state
    */
-  const getMessages = (): Ref => useState('drupal-ce-messages', () => [])
+  const getMessages = (): Ref<Array<{ type: string, message: string }>> => useState('drupal-ce-messages', () => [])
 
   /**
    * Use page data
    */
-  const getPage = (): Ref => useState('drupal-ce-page-data', () => ({}))
+  const getPage = (): Ref<DrupalPageResponse> => useState('drupal-ce-page-data', () => ({
+    breadcrumbs: [],
+    content: {},
+    content_format: 'json',
+    local_tasks: {
+      primary: [],
+      secondary: [],
+    },
+    messages: {},
+    metatags: {
+      meta: [],
+      link: [],
+      jsonld: [],
+    },
+    page_layout: 'default',
+    title: '',
+  }))
 
   /**
    * Resolve a custom element into a Vue component
    * @param element The custom element name to resolve
    */
-  const resolveCustomElement = (element: string) => {
+  const resolveCustomElement = (element: string): Component | null => {
     const nuxtApp = useNuxtApp()
-    const formatName = (name: string) => name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('')
+    const formatName = (name: string): string => name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('')
 
     // Try resolving the full component name.
     const component = nuxtApp.vueApp.component(formatName(element))
@@ -279,7 +312,7 @@ export const useDrupalCe = () => {
    *          (either a custom element component or a wrapping div component for strings/arrays).
    */
   const renderCustomElements = (
-    customElements: null | undefined | string | Record<string, any> | Array<string | object>,
+    customElements: null | undefined | string | CustomElement | Array<string | CustomElement>,
   ): Component | null => {
     // Handle null/undefined case
     if (customElements == null) {
@@ -297,7 +330,7 @@ export const useDrupalCe = () => {
     }
 
     // Handle empty object case
-    if (Object.keys(customElements).length === 0) {
+    if (typeof customElements === 'object' && !Array.isArray(customElements) && Object.keys(customElements).length === 0) {
       return null
     }
 
@@ -314,8 +347,12 @@ export const useDrupalCe = () => {
     }
 
     // Handle single custom element object
-    const resolvedElement = resolveCustomElement(customElements.element)
-    return resolvedElement ? h(resolvedElement, customElements) : null
+    if (typeof customElements === 'object' && 'element' in customElements) {
+      const resolvedElement = resolveCustomElement(customElements.element)
+      return resolvedElement ? h(resolvedElement, customElements) : null
+    }
+
+    return null
   }
 
   /**
@@ -323,7 +360,7 @@ export const useDrupalCe = () => {
    * @param nuxtApp The Nuxt app instance
    * @param pageHeaders The headers from the Drupal response
    */
-  const passThroughHeaders = (nuxtApp, pageHeaders) => {
+  const passThroughHeaders = (nuxtApp: any, pageHeaders: Record<string, string>): void => {
     // Only run when SSR context is available.
     if (!nuxtApp.ssrContext) {
       return
@@ -343,7 +380,7 @@ export const useDrupalCe = () => {
    * @param page Ref containing the Drupal page data
    * @param include Optional array of parts to include: 'title', 'meta', 'link', 'jsonld'
    */
-  const usePageHead = (page: Ref<any>, include?: Array<'title' | 'meta' | 'link' | 'jsonld'>) => {
+  const usePageHead = (page: Ref<DrupalPageResponse>, include?: Array<'title' | 'meta' | 'link' | 'jsonld'>): void => {
     const parts = include || ['title', 'meta', 'link', 'jsonld']
     useHead({
       ...(parts.includes('title') && { title: page.value.title }),
@@ -361,7 +398,7 @@ export const useDrupalCe = () => {
    * @param page Optional Ref containing the Drupal page data. If not provided, gets data from global state.
    * @returns ComputedRef resolving to the current layout name
    */
-  const getPageLayout = (page?: Ref<any>): ComputedRef<string> => {
+  const getPageLayout = (page?: Ref<DrupalPageResponse>): ComputedRef<string> => {
     const pageData = page || getPage()
     return computed(() => pageData.value?.page_layout || 'default')
   }
@@ -383,11 +420,13 @@ export const useDrupalCe = () => {
   }
 }
 
-const pushMessagesToState = (messages) => {
-  messages = Object.assign({ success: [], error: [] }, messages)
+const pushMessagesToState = (messages: DrupalMessages): void => {
+  const processedMessages = Object.assign({ success: [], error: [] }, messages)
   const messagesArray = [
-    ...messages.error.map(message => ({ type: 'error', message })),
-    ...messages.success.map(message => ({ type: 'success', message })),
+    ...(processedMessages.error || []).map(message => ({ type: 'error', message })),
+    ...(processedMessages.success || []).map(message => ({ type: 'success', message })),
+    ...(processedMessages.warning || []).map(message => ({ type: 'warning', message })),
+    ...(processedMessages.info || []).map(message => ({ type: 'info', message })),
   ]
   if (!messagesArray.length) {
     return
@@ -395,7 +434,7 @@ const pushMessagesToState = (messages) => {
   import.meta.client && useDrupalCe().getMessages().value.push(...messagesArray)
 }
 
-const menuErrorHandler = (error: Record<string, any>) => {
+const menuErrorHandler = (error: { value: any }): void => {
   console.error({ statusCode: error.value.statusCode, statusMessage: error.value.message, data: error.value.data })
   import.meta.client && useDrupalCe().getMessages().value.push({
     type: 'error',
@@ -403,7 +442,7 @@ const menuErrorHandler = (error: Record<string, any>) => {
   })
 }
 
-const pageErrorHandler = (error: Record<string, any>, context?: Record<string, any>) => {
+const pageErrorHandler = (error: { value: any }, context?: { config: any, nuxtApp: any }): void => {
   const errorData = error.value.data
   if (error.value && (!errorData?.content || context?.config.customErrorPages)) {
     // At the moment, Nuxt API proxy does not provide a nice error when the backend is not reachable. Handle it better.
