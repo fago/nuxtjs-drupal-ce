@@ -1,6 +1,19 @@
-import { defineEventHandler, readFormData } from 'h3'
+import { defineEventHandler, readFormData, createError } from 'h3'
 import { getDrupalBaseUrl } from '../../composables/useDrupalCe/server'
 import { useRuntimeConfig } from '#imports'
+import type { DrupalPageResponse } from '../../types/api'
+
+interface FormHandlerContext {
+  drupalCeCustomPageResponse?: {
+    _data?: DrupalPageResponse
+    headers?: Record<string, string>
+    error?: {
+      data: any
+      statusCode: number
+      message: string
+    }
+  }
+}
 
 export default defineEventHandler(async (event) => {
   const { ceApiEndpoint } = useRuntimeConfig().public.drupalCe
@@ -14,14 +27,15 @@ export default defineEventHandler(async (event) => {
 
     if (formData) {
       const targetUrl = event.node.req.url
-      const response = await $fetch.raw(getDrupalBaseUrl() + ceApiEndpoint + targetUrl, {
+      const response = await $fetch.raw<DrupalPageResponse>(getDrupalBaseUrl() + ceApiEndpoint + targetUrl, {
         method: 'POST',
         body: formData,
         headers: {
           'x-form-processed': 'true',
         },
       }).catch((error) => {
-        event.context.drupalCeCustomPageResponse = {
+        const context = event.context as FormHandlerContext
+        context.drupalCeCustomPageResponse = {
           error: {
             data: error,
             statusCode: error.statusCode || 400,
@@ -31,7 +45,8 @@ export default defineEventHandler(async (event) => {
       })
 
       if (response) {
-        event.context.drupalCeCustomPageResponse = {
+        const context = event.context as FormHandlerContext
+        context.drupalCeCustomPageResponse = {
           _data: response._data,
           headers: Object.fromEntries(response.headers.entries()),
         }
